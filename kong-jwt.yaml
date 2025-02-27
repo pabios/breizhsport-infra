@@ -1,0 +1,8 @@
+_format_version: "3.0"
+consumers:
+  - username: client-1
+    custom_id: "1"
+jwt_secrets:
+  - consumer: client-1
+    key: "1214814c7f707a30b5b597bff5fe949d72bfbae9e3452fdf3d728a45d69bb752"
+    algorithm: "HS256"

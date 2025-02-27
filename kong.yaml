@@ -1,0 +1,27 @@
+_format_version: "3.0"
+services:
+  - name: auth-service
+    url: http://auth:80
+    routes:
+      - name: auth-route
+        paths:
+          - /auth
+        methods:
+          - GET
+          - POST
+  - name: product-service
+    url: http://product:80
+    routes:
+      - name: product-route
+        paths:
+          - /product
+        methods:
+          - GET
+          - POST
+#plugins:
+#  - name: jwt
+#    service: auth-service
+#    config:
+#      key_claim_name: sub
+#      claims_to_verify:
+#        - exp

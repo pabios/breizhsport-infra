@@ -1,0 +1,34 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: database-product
+  labels:
+    app: database-product
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: database-product
+  template:
+    metadata:
+      labels:
+        app: database-product
+    spec:
+      containers:
+        - name: database-product
+          image: postgres:15
+          env:
+            - name: POSTGRES_USER
+              value: "postgres"
+            - name: POSTGRES_PASSWORD
+              value: "postgres"
+            - name: POSTGRES_DB
+              value: "product_db"
+          ports:
+            - containerPort: 5432
+          volumeMounts:
+            - name: db-product-storage
+              mountPath: /var/lib/postgresql/data
+      volumes:
+        - name: db-product-storage
+          emptyDir: {}

@@ -1,48 +1,263 @@
 services:
+  # ---------------------
+  # 1) PostgreSQL Auth
+  # ---------------------
+  database_auth:
+    image: postgres:15
+    container_name: database_auth
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: auth_db
+    ports:
+      - "5432:5432"
+    volumes:
+      - db_auth_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d auth_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
   auth:
     build:
       context: ../auth
-      dockerfile: ../auth/Dockerfile
+      dockerfile: Dockerfile
     container_name: auth
+    volumes:
+      - ../auth:/app
+    environment:
+      DATABASE_URL: "postgresql://postgres:postgres@database_auth:5432/auth_db"
+      # Exemples si vous souhaitez connecter Redis/RabbitMQ depuis Auth:
+      # MESSAGE_QUEUE_URL: "amqp://rabbit:rabbit@rabbitmq:5672/"
+      CACHE_URL: "redis://redis:6379"
+    depends_on:
+      database_auth:
+        condition: service_healthy
     ports:
       - "8081:80"
-    volumes:
-      - ./auth:/app
-    depends_on:
-      - database
-    env_file:
-      - ../auth/.env
-    environment:
-      DATABASE_URL: "postgresql://postgres:postgres@database:5432/breizhsport_auth_db"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:80/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
 
+  # ---------------------
+  # 2) PostgreSQL Product
+  # ---------------------
+  database_product:
+    image: postgres:15
+    container_name: database_product
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: product_db
+    ports:
+      - "5433:5432"
+    volumes:
+      - db_product_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d product_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
   product:
     build:
       context: ../product
-      dockerfile: ../product/Dockerfile
+      dockerfile: Dockerfile
     container_name: product
+    volumes:
+      - ../product:/app
+    environment:
+      DATABASE_URL: "postgresql://postgres:postgres@database_product:5432/product_db"
+      # Idem si besoin de RabbitMQ/Redis
+      # MESSAGE_QUEUE_URL: "amqp://rabbit:rabbit@rabbitmq:5672/"
+      CACHE_URL: "redis://redis:6379"
+    depends_on:
+      database_product:
+        condition: service_healthy
     ports:
       - "8082:80"
-    volumes:
-      - ./product:/app
-    depends_on:
-      - database
-    env_file:
-      - ../product/.env
-    environment:
-      DATABASE_URL: "postgresql://postgres:postgres@database:5432/breizhsport_product_db"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:80/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
 
-  database:
-    image: postgres:15.9-bullseye
-    container_name: shared_database
+  # ---------------------
+  # 3) CouchDB
+  # ---------------------
+  couchdb:
+    image: couchdb:3.3
+    container_name: couchdb
     environment:
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
-      POSTGRES_DB: breizhsport_shared_db
+      - COUCHDB_USER=admin
+      - COUCHDB_PASSWORD=admin
     ports:
-      - "5432:5432"
+      - "5984:5984"
     volumes:
-      - db_data:/var/lib/postgresql/data
+      - couchdb_data:/opt/couchdb/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://admin:admin@couchdb:5984/"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ---------------------
+  # 4) MySQL Legacy (pour migration)
+  # ---------------------
+  database_mysql_old:
+    image: mysql:8.0
+    container_name: database_mysql_old
+    environment:
+      MYSQL_ROOT_PASSWORD: oldroot
+      MYSQL_USER: olduser
+      MYSQL_PASSWORD: oldpass
+      MYSQL_DATABASE: old_db
+    ports:
+      - "3307:3306"
+    volumes:
+      - db_mysql_old_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "olduser", "-poldpass"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ---------------------
+  # 5) Adminer (visualiser BDD)
+  # ---------------------
+  adminer:
+    image: adminer
+    container_name: adminer
+    restart: always
+    ports:
+      - "8089:8080"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # ---------------------
+  # 6) Redis (Cache)
+  # ---------------------
+  redis:
+    image: redis:6.2
+    container_name: redis_cache
+    command: ["redis-server", "--appendonly", "yes"]
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ---------------------
+  # 7) RabbitMQ (Message Queue)
+  # ---------------------
+  rabbitmq:
+    image: rabbitmq:3.9-management
+    container_name: rabbitmq
+    environment:
+      RABBITMQ_DEFAULT_USER: rabbit
+      RABBITMQ_DEFAULT_PASS: rabbit
+    ports:
+      - "5672:5672"    # Port AMQP
+      - "15672:15672"  # Console d'administration
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD", "rabbitmqctl", "status"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ---------------------
+  # 8) Workers (Symfony Messenger)
+  # ---------------------
+  workers:
+    build:
+      context: ../workers
+      dockerfile: Dockerfile
+    container_name: workers
+    volumes:
+      - ../workers:/app
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    command: ["php", "bin/console", "messenger:consume", "async", "--time-limit=3600"]
+    environment:
+      - RABBITMQ_HOST=rabbitmq
+      - RABBITMQ_PORT=5672
+      - REDIS_URL=redis://redis:6379
+    healthcheck:
+      test: ["CMD", "php", "bin/console", "messenger:stats"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    # Pas besoin d'exposer de ports si c'est juste un worker
+
+  # ---------------------
+  # 9) Kong (API Gateway)
+  # ---------------------
+  kong:
+    image: kong:3.1
+    container_name: kong_gateway
+    environment:
+      KONG_DATABASE: "off"
+      KONG_PROXY_LISTEN: "0.0.0.0:8000"
+      KONG_ADMIN_LISTEN: "0.0.0.0:8001"
+      KONG_DECLARATIVE_CONFIG: /usr/local/kong/declarative/kong.yaml
+    ports:
+      - "8000:8000"
+      - "8001:8001"
+    depends_on:
+      redis:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    volumes:
+      - ./kong.yaml:/usr/local/kong/declarative/kong.yaml
+#      - ./kong-jwt.yaml:/usr/local/kong/declarative/kong-jwt.yaml
+    healthcheck:
+      test: [ "CMD", "curl", "-f", "http://localhost:8001/status" ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
 volumes:
-  db_data:
+  db_auth_data:
+  db_product_data:
+  couchdb_data:
+  db_mysql_old_data:
+  redis_data:
+  rabbitmq_data:
+
+
+
+
+  # ---------------------
+  # 10) Kong Dashboard (Interface optionnelle)
+  # ---------------------
+#  kong-dashboard:
+#    image: pgbi/kong-dashboard:latest
+#    container_name: kong_dashboard
+#    ports:
+#      - "8090:8080"
+#    environment:
+#      KONG_ADMIN_URL: "http://kong:8001"
+#    depends_on:
+#      kong:
+#        condition: service_healthy
+#    healthcheck:
+#      test: [ "CMD", "curl", "-f", "http://localhost:8080" ]
+#      interval: 10s
+#      timeout: 5s
+#      retries: 5

@@ -1,0 +1,38 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: workers
+  labels:
+    app: workers
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: workers
+  template:
+    metadata:
+      labels:
+        app: workers
+    spec:
+      containers:
+        - name: workers
+          image: workers:latest
+          imagePullPolicy: Never
+          command: ["php", "bin/console", "messenger:consume", "async", "--time-limit=3600"]
+          env:
+            - name: RABBITMQ_HOST
+              value: "rabbitmq"
+            - name: RABBITMQ_PORT
+              value: "5672"
+            - name: REDIS_URL
+              value: "redis://redis:6379"
+          readinessProbe:
+            exec:
+              command: ["php", "bin/console", "messenger:stats"]
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          livenessProbe:
+            exec:
+              command: ["php", "bin/console", "messenger:stats"]
+            initialDelaySeconds: 20
+            periodSeconds: 10
